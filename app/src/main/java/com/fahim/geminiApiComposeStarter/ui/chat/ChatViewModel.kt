@@ -18,13 +18,20 @@ class ChatViewModel(
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
+    private var lastUserPrompt: String? = null
+
     fun onPromptChange(value: String) {
         _uiState.update { it.copy(prompt = value, promptError = null) }
     }
 
+    fun onSendPrompt(text: String) {
+        onPromptChange(text)
+        onSend()
+    }
+
     fun onSend() {
-        val prompt = _uiState.value.prompt.trim()
-        if (prompt.isEmpty()) {
+        val promptText = _uiState.value.prompt.trim()
+        if (promptText.isEmpty()) {
             _uiState.update { it.copy(promptError = PromptError.EMPTY) }
             return
         }
@@ -34,20 +41,73 @@ class ChatViewModel(
         }
         if (_uiState.value.isLoading) return
 
-        _uiState.update { it.copy(isLoading = true, errorMessage = null, promptError = null) }
+        lastUserPrompt = promptText
+
+        val userMessage = ChatMessage(text = promptText, participant = Participant.USER)
+
+        _uiState.update {
+            it.copy(
+                prompt = "",
+                messages = it.messages + userMessage,
+                isLoading = true,
+                errorMessage = null,
+                promptError = null,
+            )
+        }
+
         viewModelScope.launch {
-            repository.generateText(prompt).fold(
-                onSuccess = { text ->
-                    _uiState.update { it.copy(isLoading = false, response = text) }
-                },
-                onFailure = { error ->
+            repository.generateText(promptText).fold(
+                onSuccess = { responseText ->
+                    val modelMessage = ChatMessage(text = responseText, participant = Participant.MODEL)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            errorMessage = error.message ?: "Something went wrong",
+                            response = responseText,
+                            messages = it.messages + modelMessage,
                         )
                     }
                 },
+                onFailure = { error ->
+                    val errorMsg = error.message ?: "Failed to generate response. Please try again."
+                    val errorMessageObj = ChatMessage(
+                        text = errorMsg,
+                        participant = Participant.MODEL,
+                        isError = true,
+                    )
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            errorMessage = errorMsg,
+                            messages = it.messages + errorMessageObj,
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    fun onRetry() {
+        val promptToRetry = lastUserPrompt ?: return
+        // Remove trailing error message if present
+        _uiState.update { state ->
+            val updatedMessages = if (state.messages.lastOrNull()?.isError == true) {
+                state.messages.dropLast(1)
+            } else {
+                state.messages
+            }
+            state.copy(messages = updatedMessages)
+        }
+        onSendPrompt(promptToRetry)
+    }
+
+    fun onClearChat() {
+        _uiState.update {
+            ChatUiState(
+                prompt = "",
+                messages = emptyList(),
+                response = "",
+                isLoading = false,
+                errorMessage = null,
             )
         }
     }

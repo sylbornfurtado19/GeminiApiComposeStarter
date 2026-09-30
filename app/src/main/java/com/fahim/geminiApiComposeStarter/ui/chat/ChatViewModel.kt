@@ -20,6 +20,17 @@ class ChatViewModel(
 
     private var lastUserPrompt: String? = null
 
+    init {
+        // Observe Room chat history Flow as single source of truth
+        viewModelScope.launch {
+            repository.getChatHistory().collect { history ->
+                _uiState.update { state ->
+                    state.copy(messages = history)
+                }
+            }
+        }
+    }
+
     fun onPromptChange(value: String) {
         _uiState.update { it.copy(prompt = value, promptError = null) }
     }
@@ -48,7 +59,6 @@ class ChatViewModel(
         _uiState.update {
             it.copy(
                 prompt = "",
-                messages = it.messages + userMessage,
                 isLoading = true,
                 errorMessage = null,
                 promptError = null,
@@ -56,29 +66,27 @@ class ChatViewModel(
         }
 
         viewModelScope.launch {
+            // Save user message to Room
+            repository.saveMessage(userMessage)
+
+            // Request response from Gemini API
             repository.generateText(promptText).fold(
                 onSuccess = { responseText ->
                     val modelMessage = ChatMessage(text = responseText, participant = Participant.MODEL)
+                    repository.saveMessage(modelMessage)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             response = responseText,
-                            messages = it.messages + modelMessage,
                         )
                     }
                 },
                 onFailure = { error ->
                     val errorMsg = error.message ?: "Failed to generate response. Please try again."
-                    val errorMessageObj = ChatMessage(
-                        text = errorMsg,
-                        participant = Participant.MODEL,
-                        isError = true,
-                    )
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             errorMessage = errorMsg,
-                            messages = it.messages + errorMessageObj,
                         )
                     }
                 },
@@ -88,27 +96,20 @@ class ChatViewModel(
 
     fun onRetry() {
         val promptToRetry = lastUserPrompt ?: return
-        // Remove trailing error message if present
-        _uiState.update { state ->
-            val updatedMessages = if (state.messages.lastOrNull()?.isError == true) {
-                state.messages.dropLast(1)
-            } else {
-                state.messages
-            }
-            state.copy(messages = updatedMessages)
-        }
         onSendPrompt(promptToRetry)
     }
 
     fun onClearChat() {
-        _uiState.update {
-            ChatUiState(
-                prompt = "",
-                messages = emptyList(),
-                response = "",
-                isLoading = false,
-                errorMessage = null,
-            )
+        viewModelScope.launch {
+            repository.clearChatHistory()
+            _uiState.update {
+                it.copy(
+                    prompt = "",
+                    response = "",
+                    isLoading = false,
+                    errorMessage = null,
+                )
+            }
         }
     }
 

@@ -1,5 +1,13 @@
 package com.fahim.geminiApiComposeStarter.ui.chat
 
+import android.Manifest
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -53,10 +61,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -65,10 +75,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fahim.geminiApiComposeStarter.R
 import com.fahim.geminiApiComposeStarter.ui.text.FormattedMarkdownMessage
 import com.fahim.geminiApiComposeStarter.ui.theme.GeminiApiComposeStarterTheme
+import kotlinx.coroutines.launch
+import java.util.Locale
 
 @Composable
 fun ChatRoute(viewModel: ChatViewModel) {
@@ -92,8 +105,70 @@ fun ChatScreen(
     onRetry: () -> Unit = {},
     onClearChat: () -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+
+    // Speech recognition result launcher
+    val speechRecognizerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenTextList = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spokenText = spokenTextList?.firstOrNull()
+            if (!spokenText.isNullOrBlank()) {
+                val currentText = state.prompt.trim()
+                val newText = if (currentText.isBlank()) {
+                    spokenText
+                } else {
+                    "$currentText $spokenText"
+                }
+                onPromptChange(newText)
+            }
+        }
+    }
+
+    // Helper method to launch speech recognition intent
+    fun launchSpeechToText() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now...")
+        }
+        try {
+            speechRecognizerLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar("Voice recognition is not supported on this device.")
+            }
+        }
+    }
+
+    // Runtime permission launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { isGranted ->
+        if (isGranted) {
+            launchSpeechToText()
+        } else {
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar("Microphone permission is required for voice input.")
+            }
+        }
+    }
+
+    val onMicClick = {
+        val permissionCheck = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        )
+        if (permissionCheck == PackageManager.PERMISSION_GRANTED) {
+            launchSpeechToText()
+        } else {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     LaunchedEffect(state.errorMessage) {
         state.errorMessage?.let { snackbarHostState.showSnackbar(it) }
@@ -170,6 +245,7 @@ fun ChatScreen(
                     enabled = !state.isLoading,
                     onPromptChange = onPromptChange,
                     onSend = onSend,
+                    onMicClick = onMicClick,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
@@ -493,6 +569,7 @@ private fun InputComposer(
     enabled: Boolean,
     onPromptChange: (String) -> Unit,
     onSend: () -> Unit,
+    onMicClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -530,7 +607,7 @@ private fun InputComposer(
             )
 
             IconButton(
-                onClick = { /* Speech to text future hook */ },
+                onClick = onMicClick,
                 enabled = enabled,
             ) {
                 Icon(

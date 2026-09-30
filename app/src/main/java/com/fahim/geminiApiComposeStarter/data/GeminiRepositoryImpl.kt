@@ -1,8 +1,15 @@
 package com.fahim.geminiApiComposeStarter.data
 
 import android.util.Log
+import com.fahim.geminiApiComposeStarter.data.local.ChatMessageDao
+import com.fahim.geminiApiComposeStarter.data.local.toDomainModel
+import com.fahim.geminiApiComposeStarter.data.local.toEntity
+import com.fahim.geminiApiComposeStarter.ui.chat.ChatMessage
 import com.google.ai.client.generativeai.GenerativeModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 
 private const val TAG = "GeminiRepository"
 private const val PRIMARY_MODEL = "gemini-2.5-flash"
@@ -10,10 +17,25 @@ private const val FALLBACK_MODEL = "gemini-2.0-flash"
 
 class GeminiRepositoryImpl(
     private val apiKey: String,
+    private val chatMessageDao: ChatMessageDao? = null,
     private val modelName: String = PRIMARY_MODEL,
 ) : GeminiRepository {
 
     private var model = GenerativeModel(modelName = modelName, apiKey = apiKey)
+
+    override fun getChatHistory(): Flow<List<ChatMessage>> {
+        return chatMessageDao?.getAllMessages()?.map { entities ->
+            entities.map { it.toDomainModel() }
+        } ?: emptyFlow()
+    }
+
+    override suspend fun saveMessage(message: ChatMessage) {
+        chatMessageDao?.insertMessage(message.toEntity())
+    }
+
+    override suspend fun clearChatHistory() {
+        chatMessageDao?.clearAllMessages()
+    }
 
     override suspend fun generateText(prompt: String): Result<String> {
         try {
@@ -29,7 +51,6 @@ class GeminiRepositoryImpl(
         } catch (e: Exception) {
             Log.e(TAG, "generateContent failed for model ${model.modelName}", e)
 
-            // If primary model failed, attempt fallback to gemini-2.0-flash
             if (model.modelName == PRIMARY_MODEL) {
                 try {
                     Log.i(TAG, "Attempting fallback to $FALLBACK_MODEL")
@@ -47,7 +68,6 @@ class GeminiRepositoryImpl(
                 }
             }
 
-            // Sanitize error message to avoid raw kotlinx.serialization MissingFieldException stack traces
             val sanitizedMessage = sanitizeError(e)
             return Result.failure(IllegalStateException(sanitizedMessage, e))
         }

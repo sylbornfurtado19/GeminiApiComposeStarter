@@ -3,6 +3,8 @@ package com.fahim.geminiApiComposeStarter.data.security
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -18,11 +20,8 @@ class ApiKeyEncryptionManager {
         private const val GCM_TAG_LENGTH = 128
     }
 
-    private val keyStore: KeyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply {
-        load(null)
-    }
-
     private fun getOrCreateSecretKey(): SecretKey {
+        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             val keyGenerator = KeyGenerator.getInstance(
                 KeyProperties.KEY_ALGORITHM_AES,
@@ -43,9 +42,9 @@ class ApiKeyEncryptionManager {
         return (keyStore.getEntry(KEY_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
     }
 
-    fun encrypt(plainText: String): Pair<String, String> {
-        if (plainText.isBlank()) return "" to ""
-        return try {
+    suspend fun encrypt(plainText: String): Pair<String, String> = withContext(Dispatchers.IO) {
+        if (plainText.isBlank()) return@withContext "" to ""
+        return@withContext try {
             val secretKey = getOrCreateSecretKey()
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, secretKey)
@@ -60,9 +59,9 @@ class ApiKeyEncryptionManager {
         }
     }
 
-    fun decrypt(encryptedBase64: String, ivBase64: String): String {
-        if (encryptedBase64.isBlank() || ivBase64.isBlank()) return ""
-        return try {
+    suspend fun decrypt(encryptedBase64: String, ivBase64: String): String = withContext(Dispatchers.IO) {
+        if (encryptedBase64.isBlank() || ivBase64.isBlank()) return@withContext ""
+        return@withContext try {
             val secretKey = getOrCreateSecretKey()
             val cipher = Cipher.getInstance(TRANSFORMATION)
             val iv = Base64.decode(ivBase64, Base64.NO_WRAP)

@@ -16,11 +16,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -56,8 +58,7 @@ fun FormattedMarkdownMessage(
     textColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     val clipboardManager = LocalClipboardManager.current
-
-    val blocks = rememberMarkdownBlocks(text)
+    val blocks = remember(text) { parseMarkdownBlocks(text) }
 
     Column(modifier = modifier) {
         blocks.forEach { block ->
@@ -105,7 +106,7 @@ private sealed interface MarkdownBlock {
     data class ListItem(val content: String) : MarkdownBlock
 }
 
-private fun rememberMarkdownBlocks(rawText: String): List<MarkdownBlock> {
+private fun parseMarkdownBlocks(rawText: String): List<MarkdownBlock> {
     val blocks = mutableListOf<MarkdownBlock>()
     val lines = rawText.lines()
 
@@ -173,8 +174,9 @@ private fun rememberMarkdownBlocks(rawText: String): List<MarkdownBlock> {
 
 @Composable
 private fun ParagraphItem(text: String, textColor: Color) {
+    val parsedText = remember(text) { parseRichText(text) }
     Text(
-        text = parseRichText(text),
+        text = parsedText,
         color = textColor,
         fontSize = 15.sp,
         lineHeight = 22.sp,
@@ -189,9 +191,10 @@ private fun HeadingItem(text: String, level: Int, textColor: Color) {
         2 -> 18.sp to FontWeight.SemiBold
         else -> 16.sp to FontWeight.SemiBold
     }
+    val parsedText = remember(text) { parseRichText(text) }
 
     Text(
-        text = parseRichText(text),
+        text = parsedText,
         color = textColor,
         fontSize = fontSize,
         fontWeight = fontWeight,
@@ -201,6 +204,7 @@ private fun HeadingItem(text: String, level: Int, textColor: Color) {
 
 @Composable
 private fun ListItemBlock(text: String, textColor: Color) {
+    val parsedText = remember(text) { parseRichText(text) }
     Row(modifier = Modifier.padding(vertical = 2.dp, horizontal = 4.dp)) {
         Text(
             text = "• ",
@@ -209,7 +213,7 @@ private fun ListItemBlock(text: String, textColor: Color) {
             fontSize = 15.sp,
         )
         Text(
-            text = parseRichText(text),
+            text = parsedText,
             color = textColor,
             fontSize = 15.sp,
             lineHeight = 22.sp,
@@ -252,7 +256,7 @@ private fun CodeBlockItem(
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_copy),
-                        contentDescription = "Copy code",
+                        contentDescription = stringResource(R.string.copy_message),
                         tint = Color(0xFFA6ADC8),
                         modifier = Modifier.size(16.dp),
                     )

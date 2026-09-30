@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -27,8 +28,13 @@ class ChatViewModel(
     private var lastUserPrompt: String? = null
 
     init {
-        // Observe list of all chat sessions
         viewModelScope.launch {
+            val savedConvId = preferencesRepository?.lastConversationId?.firstOrNull()?.takeIf { it.isNotBlank() }
+            val initialId = savedConvId ?: UUID.randomUUID().toString()
+
+            _uiState.update { it.copy(activeConversationId = initialId) }
+            observeConversationHistory(initialId)
+
             repository.getChatSessions().collect { sessions ->
                 _uiState.update { state ->
                     state.copy(conversations = sessions)
@@ -36,10 +42,6 @@ class ChatViewModel(
             }
         }
 
-        // Start observing current active conversation history
-        observeConversationHistory(_uiState.value.activeConversationId)
-
-        // Observe DataStore Theme preference
         preferencesRepository?.let { prefs ->
             viewModelScope.launch {
                 prefs.themeMode.collect { mode ->
@@ -63,19 +65,22 @@ class ChatViewModel(
                 }
             }
         }
+        preferencesRepository?.let { prefs ->
+            viewModelScope.launch {
+                prefs.setLastConversationId(conversationId)
+            }
+        }
     }
 
     fun onNewChat() {
-        if (_uiState.value.messages.isEmpty()) return // Already empty
+        if (_uiState.value.messages.isEmpty()) return
 
         val newConversationId = UUID.randomUUID().toString()
         _uiState.update {
             it.copy(
                 activeConversationId = newConversationId,
                 prompt = "",
-                response = "",
                 errorMessage = null,
-                promptError = null,
             )
         }
         observeConversationHistory(newConversationId)
@@ -86,9 +91,7 @@ class ChatViewModel(
         _uiState.update {
             it.copy(
                 prompt = "",
-                response = "",
                 errorMessage = null,
-                promptError = null,
             )
         }
         observeConversationHistory(conversationId)
@@ -103,7 +106,7 @@ class ChatViewModel(
     }
 
     fun onPromptChange(value: String) {
-        _uiState.update { it.copy(prompt = value, promptError = null) }
+        _uiState.update { it.copy(prompt = value) }
     }
 
     fun onSendPrompt(text: String) {
@@ -111,12 +114,13 @@ class ChatViewModel(
         onSend()
     }
 
+    fun onErrorShown() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
     fun onSend() {
         val promptText = _uiState.value.prompt.trim()
-        if (promptText.isEmpty()) {
-            _uiState.update { it.copy(promptError = PromptError.EMPTY) }
-            return
-        }
+        if (promptText.isEmpty()) return
         if (!hasApiKey) {
             _uiState.update { it.copy(errorMessage = MISSING_API_KEY_MESSAGE) }
             return
@@ -125,6 +129,7 @@ class ChatViewModel(
 
         lastUserPrompt = promptText
         val activeConvId = _uiState.value.activeConversationId
+        val historyBeforePrompt = _uiState.value.messages.takeLast(20)
 
         val userMessage = ChatMessage(
             conversationId = activeConvId,
@@ -135,16 +140,15 @@ class ChatViewModel(
         _uiState.update {
             it.copy(
                 prompt = "",
-                isLoading = true,
+                loadingConversationId = activeConvId,
                 errorMessage = null,
-                promptError = null,
             )
         }
 
         viewModelScope.launch {
             repository.saveMessage(userMessage)
 
-            repository.generateText(promptText).fold(
+            repository.generateText(promptText, historyBeforePrompt).fold(
                 onSuccess = { responseText ->
                     val modelMessage = ChatMessage(
                         conversationId = activeConvId,
@@ -154,8 +158,7 @@ class ChatViewModel(
                     repository.saveMessage(modelMessage)
                     _uiState.update {
                         it.copy(
-                            isLoading = false,
-                            response = responseText,
+                            loadingConversationId = null,
                         )
                     }
                 },
@@ -163,7 +166,7 @@ class ChatViewModel(
                     val errorMsg = error.message ?: "Failed to generate response. Please try again."
                     _uiState.update {
                         it.copy(
-                            isLoading = false,
+                            loadingConversationId = null,
                             errorMessage = errorMsg,
                         )
                     }
@@ -174,20 +177,66 @@ class ChatViewModel(
 
     fun onRetry() {
         val promptToRetry = lastUserPrompt ?: return
-        onSendPrompt(promptToRetry)
+        val activeConvId = _uiState.value.activeConversationId
+        val historyBeforeRetry = _uiState.value.messages
+            .filter { it.text != promptToRetry }
+            .takeLast(20)
+
+        if (!hasApiKey) {
+            _uiState.update { it.copy(errorMessage = MISSING_API_KEY_MESSAGE) }
+            return
+        }
+        if (_uiState.value.isLoading) return
+
+        _uiState.update {
+            it.copy(
+                loadingConversationId = activeConvId,
+                errorMessage = null,
+            )
+        }
+
+        viewModelScope.launch {
+            repository.generateText(promptToRetry, historyBeforeRetry).fold(
+                onSuccess = { responseText ->
+                    val modelMessage = ChatMessage(
+                        conversationId = activeConvId,
+                        text = responseText,
+                        participant = Participant.MODEL,
+                    )
+                    repository.saveMessage(modelMessage)
+                    _uiState.update {
+                        it.copy(
+                            loadingConversationId = null,
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    val errorMsg = error.message ?: "Failed to generate response. Please try again."
+                    _uiState.update {
+                        it.copy(
+                            loadingConversationId = null,
+                            errorMessage = errorMsg,
+                        )
+                    }
+                },
+            )
+        }
     }
 
     fun onClearChat() {
+        val activeConvId = _uiState.value.activeConversationId
         viewModelScope.launch {
-            repository.clearChatHistory()
+            repository.deleteConversation(activeConvId)
+            val newConversationId = UUID.randomUUID().toString()
             _uiState.update {
                 it.copy(
+                    activeConversationId = newConversationId,
                     prompt = "",
-                    response = "",
-                    isLoading = false,
+                    loadingConversationId = null,
                     errorMessage = null,
                 )
             }
+            observeConversationHistory(newConversationId)
         }
     }
 

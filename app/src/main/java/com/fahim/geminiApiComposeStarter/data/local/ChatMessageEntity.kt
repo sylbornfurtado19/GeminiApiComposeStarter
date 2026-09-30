@@ -1,11 +1,15 @@
 package com.fahim.geminiApiComposeStarter.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.fahim.geminiApiComposeStarter.ui.chat.ChatMessage
 import com.fahim.geminiApiComposeStarter.ui.chat.Participant
 
-@Entity(tableName = "chat_messages")
+@Entity(
+    tableName = "chat_messages",
+    indices = [Index(value = ["conversationId"])],
+)
 data class ChatMessageEntity(
     @PrimaryKey val id: String,
     val conversationId: String = "default_conversation",

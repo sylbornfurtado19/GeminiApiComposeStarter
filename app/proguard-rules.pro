@@ -10,16 +10,6 @@
 -keepclassmembers class **$serializer {
     *** INSTANCE;
 }
--keepclassmembers class * {
-    *** Companion;
-}
--keepclassmembers class * {
-    *** CreatingSerializer;
-}
 
 # Keep DataStore Preferences
 -keepclassmembers class * extends androidx.datastore.preferences.core.Preferences
-
-# Keep Android KeyStore and AES Security components
--keep class com.fahim.geminiApiComposeStarter.data.security.** { *; }
--keep class com.fahim.geminiApiComposeStarter.data.local.** { *; }

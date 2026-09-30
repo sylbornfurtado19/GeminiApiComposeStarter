@@ -29,12 +29,13 @@ data class ChatUiState(
     val conversations: List<ChatSession> = emptyList(),
     val messages: List<ChatMessage> = emptyList(),
     val prompt: String = "",
-    val isLoading: Boolean = false,
+    val loadingConversationId: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val promptError: PromptError? = null,
     val errorMessage: String? = null,
-    val response: String = "",
-)
+) {
+    val isLoading: Boolean get() = loadingConversationId == activeConversationId
+}
 
 enum class PromptError {
     EMPTY,

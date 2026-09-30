@@ -9,6 +9,7 @@ interface GeminiRepository {
     fun getChatHistory(conversationId: String): Flow<List<ChatMessage>>
     fun getChatSessions(): Flow<List<ChatSession>>
     suspend fun saveMessage(message: ChatMessage)
+    suspend fun deleteConversation(conversationId: String)
     suspend fun clearChatHistory()
-    suspend fun generateText(prompt: String): Result<String>
+    suspend fun generateText(prompt: String, conversationHistory: List<ChatMessage> = emptyList()): Result<String>
 }

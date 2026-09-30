@@ -21,6 +21,8 @@ interface PreferencesRepository {
     val encryptedApiKeyData: Flow<Pair<String, String>>
     suspend fun saveEncryptedApiKey(encryptedKey: String, iv: String)
     suspend fun getEncryptedApiKeyData(): Pair<String, String>
+    val lastConversationId: Flow<String?>
+    suspend fun setLastConversationId(conversationId: String)
 }
 
 class PreferencesRepositoryImpl(private val context: Context) : PreferencesRepository {
@@ -29,6 +31,7 @@ class PreferencesRepositoryImpl(private val context: Context) : PreferencesRepos
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val ENCRYPTED_API_KEY = stringPreferencesKey("encrypted_api_key")
         val API_KEY_IV = stringPreferencesKey("api_key_iv")
+        val LAST_CONVERSATION_ID = stringPreferencesKey("last_conversation_id")
     }
 
     override val themeMode: Flow<ThemeMode> = context.dataStore.data
@@ -73,5 +76,23 @@ class PreferencesRepositoryImpl(private val context: Context) : PreferencesRepos
 
     override suspend fun getEncryptedApiKeyData(): Pair<String, String> {
         return encryptedApiKeyData.first()
+    }
+
+    override val lastConversationId: Flow<String?> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            preferences[PreferencesKeys.LAST_CONVERSATION_ID]
+        }
+
+    override suspend fun setLastConversationId(conversationId: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.LAST_CONVERSATION_ID] = conversationId
+        }
     }
 }

@@ -9,14 +9,17 @@ import com.fahim.geminiApiComposeStarter.ui.chat.ChatMessage
 import com.fahim.geminiApiComposeStarter.ui.chat.ChatSession
 import com.fahim.geminiApiComposeStarter.ui.chat.Participant
 import com.google.ai.client.generativeai.GenerativeModel
+import com.google.ai.client.generativeai.type.content
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 private const val TAG = "GeminiRepository"
-private const val PRIMARY_MODEL = "gemini-2.5-flash"
-private const val FALLBACK_MODEL = "gemini-2.0-flash"
+private const val PRIMARY_MODEL = "gemini-3.5-flash"
+private const val FALLBACK_MODEL = "gemini-2.5-flash" // remove after 2026-10-16
 
 class GeminiRepositoryImpl(
     private val apiKey: String,
@@ -32,49 +35,52 @@ class GeminiRepositoryImpl(
     }
 
     override fun getChatSessions(): Flow<List<ChatSession>> {
-        return chatMessageDao?.getAllMessages()?.map { entities ->
-            entities.groupBy { it.conversationId }
-                .map { (convId, messages) ->
-                    val firstUserMsg = messages.firstOrNull { it.participant == Participant.USER.name }?.text
-                    val title = if (!firstUserMsg.isNullOrBlank()) {
-                        if (firstUserMsg.length > 32) "${firstUserMsg.take(32)}..." else firstUserMsg
-                    } else {
-                        "New Chat"
-                    }
-                    val lastTimestamp = messages.maxOfOrNull { it.timestamp } ?: System.currentTimeMillis()
-                    ChatSession(
-                        id = convId,
-                        title = title,
-                        updatedAt = lastTimestamp,
-                    )
-                }
-                .sortedByDescending { it.updatedAt }
+        return chatMessageDao?.getChatSessions()?.map { summaries ->
+            summaries.map { summary ->
+                val rawTitle = summary.title.orEmpty().ifBlank { "New Chat" }
+                val truncatedTitle = if (rawTitle.length > 32) "${rawTitle.take(32)}..." else rawTitle
+                ChatSession(
+                    id = summary.id,
+                    title = truncatedTitle,
+                    updatedAt = summary.updatedAt ?: System.currentTimeMillis(),
+                )
+            }
         } ?: emptyFlow()
     }
 
     override suspend fun saveMessage(message: ChatMessage) {
-        chatMessageDao?.insertMessage(message.toEntity())
+        withContext(Dispatchers.IO) {
+            chatMessageDao?.insertMessage(message.toEntity())
+        }
+    }
+
+    override suspend fun deleteConversation(conversationId: String) {
+        withContext(Dispatchers.IO) {
+            chatMessageDao?.deleteConversation(conversationId)
+        }
     }
 
     override suspend fun clearChatHistory() {
-        chatMessageDao?.clearAllMessages()
+        withContext(Dispatchers.IO) {
+            chatMessageDao?.clearAllMessages()
+        }
     }
 
-    override suspend fun generateText(prompt: String): Result<String> {
-        return try {
+    override suspend fun generateText(
+        prompt: String,
+        conversationHistory: List<ChatMessage>,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
             val activeKey = secureApiKeyStorage?.getDecryptedApiKey()?.takeIf { it.isNotBlank() } ?: apiKey
             if (activeKey.isBlank()) {
-                return Result.failure(IllegalStateException("Unable to initialize secure Gemini configuration."))
+                return@withContext Result.failure(IllegalStateException("Unable to initialize secure Gemini configuration."))
             }
 
-            val currentModel = GenerativeModel(modelName = modelName, apiKey = activeKey)
-            val response = currentModel.generateContent(prompt)
-            val text = response.text?.takeIf { it.isNotBlank() }
-
-            if (text != null) {
-                Result.success(text)
+            val resultText = executeModelGeneration(modelName, activeKey, prompt, conversationHistory)
+            if (resultText != null) {
+                return@withContext Result.success(resultText)
             } else {
-                Result.failure(IllegalStateException("Empty response from Gemini"))
+                return@withContext Result.failure(IllegalStateException("Empty response from Gemini"))
             }
         } catch (e: CancellationException) {
             throw e
@@ -84,12 +90,10 @@ class GeminiRepositoryImpl(
             if (modelName == PRIMARY_MODEL) {
                 try {
                     val activeKey = secureApiKeyStorage?.getDecryptedApiKey()?.takeIf { it.isNotBlank() } ?: apiKey
-                    val fallbackModel = GenerativeModel(modelName = FALLBACK_MODEL, apiKey = activeKey)
-                    val fallbackResponse = fallbackModel.generateContent(prompt)
-                    val fallbackText = fallbackResponse.text?.takeIf { it.isNotBlank() }
+                    val fallbackText = executeModelGeneration(FALLBACK_MODEL, activeKey, prompt, conversationHistory)
                     if (fallbackText != null) {
                         modelName = FALLBACK_MODEL
-                        return Result.success(fallbackText)
+                        return@withContext Result.success(fallbackText)
                     }
                 } catch (fallbackException: CancellationException) {
                     throw fallbackException
@@ -99,8 +103,30 @@ class GeminiRepositoryImpl(
             }
 
             val sanitizedMessage = sanitizeError(e)
-            Result.failure(IllegalStateException(sanitizedMessage))
+            return@withContext Result.failure(IllegalStateException(sanitizedMessage))
         }
+    }
+
+    private suspend fun executeModelGeneration(
+        targetModelName: String,
+        activeApiKey: String,
+        prompt: String,
+        history: List<ChatMessage>,
+    ): String? {
+        val model = GenerativeModel(modelName = targetModelName, apiKey = activeApiKey)
+        val validHistory = history.filter { !it.isError }
+        val response = if (validHistory.isNotEmpty()) {
+            val historyContent = validHistory.map { msg ->
+                content(role = if (msg.participant == Participant.USER) "user" else "model") {
+                    text(msg.text)
+                }
+            }
+            val chat = model.startChat(history = historyContent)
+            chat.sendMessage(prompt)
+        } else {
+            model.generateContent(prompt)
+        }
+        return response.text?.takeIf { it.isNotBlank() }
     }
 
     private fun sanitizeError(e: Exception): String {
@@ -119,7 +145,7 @@ class GeminiRepositoryImpl(
                 msg
 
             else ->
-                "Unable to initialize secure Gemini configuration."
+                "Unable to connect to Gemini API. Please check your network connection."
         }
     }
 }

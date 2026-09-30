@@ -1,5 +1,6 @@
 package com.fahim.geminiApiComposeStarter.ui.chat
 
+import com.fahim.geminiApiComposeStarter.data.preferences.ThemeMode
 import java.util.UUID
 
 enum class Participant {
@@ -20,6 +21,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val prompt: String = "",
     val isLoading: Boolean = false,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val promptError: PromptError? = null,
     val errorMessage: String? = null,
     val response: String = "",

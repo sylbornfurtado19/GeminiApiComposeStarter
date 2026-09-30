@@ -8,6 +8,7 @@ import com.fahim.geminiApiComposeStarter.ui.chat.Participant
 @Entity(tableName = "chat_messages")
 data class ChatMessageEntity(
     @PrimaryKey val id: String,
+    val conversationId: String = "default_conversation",
     val text: String,
     val participant: String,
     val timestamp: Long,
@@ -17,6 +18,7 @@ data class ChatMessageEntity(
 fun ChatMessageEntity.toDomainModel(): ChatMessage {
     return ChatMessage(
         id = id,
+        conversationId = conversationId,
         text = text,
         participant = if (participant == Participant.USER.name) Participant.USER else Participant.MODEL,
         timestamp = timestamp,
@@ -27,6 +29,7 @@ fun ChatMessageEntity.toDomainModel(): ChatMessage {
 fun ChatMessage.toEntity(): ChatMessageEntity {
     return ChatMessageEntity(
         id = id,
+        conversationId = conversationId,
         text = text,
         participant = participant.name,
         timestamp = timestamp,

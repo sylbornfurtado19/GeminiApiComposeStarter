@@ -17,6 +17,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,6 +81,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,6 +105,8 @@ fun ChatRoute(viewModel: ChatViewModel) {
         onRetry = viewModel::onRetry,
         onClearChat = viewModel::onClearChat,
         onThemeModeSelected = viewModel::onThemeModeSelected,
+        onNewChat = viewModel::onNewChat,
+        onSelectConversation = viewModel::onSelectConversation,
     )
 }
 
@@ -115,6 +119,8 @@ fun ChatScreen(
     onRetry: () -> Unit = {},
     onClearChat: () -> Unit = {},
     onThemeModeSelected: (ThemeMode) -> Unit = {},
+    onNewChat: () -> Unit = {},
+    onSelectConversation: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -140,7 +146,6 @@ fun ChatScreen(
         }
     }
 
-    // Helper method to launch speech recognition intent
     fun launchSpeechToText() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -156,7 +161,6 @@ fun ChatScreen(
         }
     }
 
-    // Runtime permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { isGranted ->
@@ -198,8 +202,12 @@ fun ChatScreen(
             GeminiTopAppBar(
                 selectedThemeMode = state.themeMode,
                 onThemeModeSelected = onThemeModeSelected,
+                onNewChat = onNewChat,
+                onSelectConversation = onSelectConversation,
                 onClearChat = onClearChat,
                 hasMessages = state.messages.isNotEmpty(),
+                activeConversationId = state.activeConversationId,
+                conversations = state.conversations,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -271,11 +279,97 @@ fun ChatScreen(
 private fun GeminiTopAppBar(
     selectedThemeMode: ThemeMode,
     onThemeModeSelected: (ThemeMode) -> Unit,
+    onNewChat: () -> Unit,
+    onSelectConversation: (String) -> Unit,
     onClearChat: () -> Unit,
     hasMessages: Boolean,
+    activeConversationId: String,
+    conversations: List<ChatSession>,
 ) {
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showNewChatDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
 
+    // New Chat Confirmation Dialog
+    if (showNewChatDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewChatDialog = false },
+            title = { Text(text = "Start a new chat?", fontWeight = FontWeight.Bold) },
+            text = { Text("Your current conversation will be saved to chat history.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showNewChatDialog = false
+                        onNewChat()
+                    },
+                ) {
+                    Text("New Chat", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewChatDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    // Chat History Dialog
+    if (showHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryDialog = false },
+            title = { Text(text = "Chat History", fontWeight = FontWeight.Bold) },
+            text = {
+                if (conversations.isEmpty()) {
+                    Text(
+                        text = "No previous conversations found.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        items(conversations) { session ->
+                            val isSelected = session.id == activeConversationId
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onSelectConversation(session.id)
+                                        showHistoryDialog = false
+                                    },
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = session.title,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHistoryDialog = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+
+    // Theme Dialog
     if (showThemeDialog) {
         AlertDialog(
             onDismissRequest = { showThemeDialog = false },
@@ -351,6 +445,33 @@ private fun GeminiTopAppBar(
             }
         },
         actions = {
+            // New Chat Action Button
+            IconButton(
+                onClick = {
+                    if (hasMessages) {
+                        showNewChatDialog = true
+                    } else {
+                        onNewChat()
+                    }
+                },
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_add),
+                    contentDescription = "New Chat",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            // Chat History Action Button
+            IconButton(onClick = { showHistoryDialog = true }) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_history),
+                    contentDescription = "Chat History",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            // Theme Action Button
             IconButton(onClick = { showThemeDialog = true }) {
                 Icon(
                     painter = painterResource(R.drawable.ic_theme),
@@ -358,6 +479,7 @@ private fun GeminiTopAppBar(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
             if (hasMessages) {
                 IconButton(onClick = onClearChat) {
                     Icon(

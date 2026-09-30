@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.fahim.geminiApiComposeStarter.data.GeminiRepository
 import com.fahim.geminiApiComposeStarter.data.preferences.PreferencesRepository
 import com.fahim.geminiApiComposeStarter.data.preferences.ThemeMode
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ChatViewModel(
     private val repository: GeminiRepository,
@@ -21,17 +23,21 @@ class ChatViewModel(
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
+    private var historyObservationJob: Job? = null
     private var lastUserPrompt: String? = null
 
     init {
-        // Observe Room chat history Flow as single source of truth
+        // Observe list of all chat sessions
         viewModelScope.launch {
-            repository.getChatHistory().collect { history ->
+            repository.getChatSessions().collect { sessions ->
                 _uiState.update { state ->
-                    state.copy(messages = history)
+                    state.copy(conversations = sessions)
                 }
             }
         }
+
+        // Start observing current active conversation history
+        observeConversationHistory(_uiState.value.activeConversationId)
 
         // Observe DataStore Theme preference
         preferencesRepository?.let { prefs ->
@@ -43,6 +49,49 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    private fun observeConversationHistory(conversationId: String) {
+        historyObservationJob?.cancel()
+        historyObservationJob = viewModelScope.launch {
+            repository.getChatHistory(conversationId).collect { history ->
+                _uiState.update { state ->
+                    state.copy(
+                        activeConversationId = conversationId,
+                        messages = history,
+                    )
+                }
+            }
+        }
+    }
+
+    fun onNewChat() {
+        if (_uiState.value.messages.isEmpty()) return // Already empty
+
+        val newConversationId = UUID.randomUUID().toString()
+        _uiState.update {
+            it.copy(
+                activeConversationId = newConversationId,
+                prompt = "",
+                response = "",
+                errorMessage = null,
+                promptError = null,
+            )
+        }
+        observeConversationHistory(newConversationId)
+    }
+
+    fun onSelectConversation(conversationId: String) {
+        if (conversationId == _uiState.value.activeConversationId) return
+        _uiState.update {
+            it.copy(
+                prompt = "",
+                response = "",
+                errorMessage = null,
+                promptError = null,
+            )
+        }
+        observeConversationHistory(conversationId)
     }
 
     fun onThemeModeSelected(mode: ThemeMode) {
@@ -75,8 +124,13 @@ class ChatViewModel(
         if (_uiState.value.isLoading) return
 
         lastUserPrompt = promptText
+        val activeConvId = _uiState.value.activeConversationId
 
-        val userMessage = ChatMessage(text = promptText, participant = Participant.USER)
+        val userMessage = ChatMessage(
+            conversationId = activeConvId,
+            text = promptText,
+            participant = Participant.USER,
+        )
 
         _uiState.update {
             it.copy(
@@ -92,7 +146,11 @@ class ChatViewModel(
 
             repository.generateText(promptText).fold(
                 onSuccess = { responseText ->
-                    val modelMessage = ChatMessage(text = responseText, participant = Participant.MODEL)
+                    val modelMessage = ChatMessage(
+                        conversationId = activeConvId,
+                        text = responseText,
+                        participant = Participant.MODEL,
+                    )
                     repository.saveMessage(modelMessage)
                     _uiState.update {
                         it.copy(

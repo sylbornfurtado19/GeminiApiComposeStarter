@@ -529,9 +529,9 @@ private fun EmptyChatState(
 ) {
     val suggestions = listOf(
         "Explain a concept" to "Explain quantum computing in simple terms for a beginner.",
-        "Help me code" to "Write a Kotlin function using Coroutines to fetch data asynchronously.",
-        "Study with me" to "Create a quick 3-question practice quiz on Jetpack Compose state.",
-        "Summarize text" to "Summarize the key differences between MVVM and MVI architecture.",
+        "Brainstorm ideas" to "Give me 5 creative ideas for a fun weekend activity with friends.",
+        "Help me write" to "Draft a polite and professional email requesting an extension on a deadline.",
+        "Summarize text" to "Summarize how solar energy works and its main benefits.",
     )
 
     Column(
